@@ -1,13 +1,15 @@
-from cpython.mem cimport PyMem_Malloc, PyMem_Free
+#from cpython.mem cimport PyMem_Malloc, PyMem_Free
 from libc.stdint cimport int64_t, uint32_t, uint64_t
 from posix.unistd cimport pid_t, useconds_t, read, usleep
 from posix.ioctl cimport ioctl
 from libc.signal cimport SIGCONT, SIGSTOP
 from cython cimport sizeof, bool
-import os
+
+DEF DEBUG = False
 
 cdef extern from "signal.h" nogil:
   int kill(pid_t pid, int sig) except -1
+
 
 cdef extern from "linux/perf_event.h":
   cdef struct perf_event_attr:
@@ -30,6 +32,7 @@ cdef extern from "linux/perf_event.h":
   cdef int PERF_FORMAT_TOTAL_TIME_ENABLED
   cdef int PERF_FORMAT_TOTAL_TIME_RUNNING
   cdef int PERF_EVENT_IOC_ENABLE
+
 
 cdef extern from "_perf.h":
   void* mymalloc(size_t size)
@@ -70,7 +73,8 @@ cdef class Task:
     pe.config = PERF_COUNT_HW_INSTRUCTIONS
     pe.exclude_host = exclude_host
     pe.exclude_guest = exclude_guest
-    print("CFG: exclude_guest: {}, exclude_host:".format(exclude_guest, exclude_host))
+    IF DEBUG:
+      print("CFG: exclude_guest: {}, exclude_host: {}".format(exclude_guest, exclude_host))
     self.ifd = perf_event_open(pe, pid, -1, -1, 0)
 
 
