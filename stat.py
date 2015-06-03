@@ -27,6 +27,9 @@ if __name__ == '__main__':
   start = time()
   while (time() - start) < args.time:
     r = task.measure(args.interval)
-    print(r)
+    if not r[0] or not r[1]:
+      print("missing datapoint")
+      continue
+    # print(r)
     ipc = r[0]/r[1]
     print("IPC: {:.3f}".format(ipc))
