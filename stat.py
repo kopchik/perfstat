@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
-from perflib import Task
+from perfstat import Task
 from time import time
 
 def to_bool(s):
