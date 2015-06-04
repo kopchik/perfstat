@@ -1,4 +1,3 @@
-#from cpython.mem cimport PyMem_Malloc, PyMem_Free
 from libc.stdint cimport int64_t, uint32_t, uint64_t
 from posix.unistd cimport pid_t, useconds_t, read, usleep
 from posix.ioctl cimport ioctl
@@ -32,6 +31,7 @@ cdef extern from "linux/perf_event.h":
   cdef int PERF_FORMAT_TOTAL_TIME_ENABLED
   cdef int PERF_FORMAT_TOTAL_TIME_RUNNING
   cdef int PERF_EVENT_IOC_ENABLE
+  cdef int PERF_FLAG_FD_CLOEXEC
 
 
 cdef extern from "_perf.h":
@@ -49,18 +49,23 @@ cdef struct Result:
 
 
 cdef class Task:
-  cdef pid_t pid
+  cdef int cpu, exclude_host, exclude_guest
   cdef int ifd, cfd
+  cdef pid_t pid
 
   def __repr__(self):
-    return "Task(%s)"% self.pid
+    return "Task(pid=%s, cpu={cpu}, exclude_host={excl_host}, exclude_guest={excl_guest})" \
+           .format(pid=self.pid, cpu=self.cpu, excl_host=self.exclude_host, excl_guest=self.exclude_guest)
 
-  def __cinit__(self, pid_t pid=0, int exclude_host=0, int exclude_guest=1):
+  def __cinit__(self, pid_t pid=0, int cpu=-1, int exclude_host=0, int exclude_guest=1):
     cdef int pe_size
     cdef perf_event_attr *pe
 
     kill(pid, 0)
     self.pid = pid
+    self.cpu = cpu
+    self.exclude_host = exclude_host
+    self.exclude_guest = exclude_guest
 
     pe_size = sizeof(perf_event_attr)
     pe = <perf_event_attr*>mymalloc(pe_size)
@@ -73,14 +78,21 @@ cdef class Task:
     pe.config = PERF_COUNT_HW_INSTRUCTIONS
     pe.exclude_host = exclude_host
     pe.exclude_guest = exclude_guest
+
+    flags = PERF_FLAG_FD_CLOEXEC
+
     IF DEBUG:
-      print("CFG: exclude_guest: {}, exclude_host: {}".format(exclude_guest, exclude_host))
-    self.ifd = perf_event_open(pe, pid, -1, -1, 0)
+      print("CFG: cpu: {cpu}, exclude_guest: {}, exclude_host: {}".format(exclude_guest, exclude_host, cpu=cpu))
 
+    self.ifd = perf_event_open(pe, pid, cpu, -1, flags)
 
+    #event, pid, cpu, group_fd, flags);
+
+    # cycles counter
     pe.config = PERF_COUNT_HW_CPU_CYCLES
-    self.cfd = perf_event_open(pe, pid, -1, self.ifd, 0)
+    self.cfd = perf_event_open(pe, pid, cpu, self.ifd, flags)
 
+    # enable events
     r = ioctl(self.ifd, PERF_EVENT_IOC_ENABLE, PERF_IOC_FLAG_GROUP)
     assert r != -1, "ioctl PERF_EVENT_IOC_ENABLE failed"
 
@@ -89,9 +101,12 @@ cdef class Task:
     cdef Result cnts
     cdef int r
 
+    # reset counters before reading
     r = ioctl(self.ifd, PERF_EVENT_IOC_RESET, PERF_IOC_FLAG_GROUP)
     assert r != -1, "ioctl PERF_EVENT_IOC_RESET failed"
-    usleep(<useconds_t>(interval*(10**3)))  # convert seconds to microseconds
+    # let it work fork a while
+    usleep(<useconds_t>(interval*(10**3)))  # convert milliseconds to microseconds
+    # read and parse
     r = read(self.ifd, &cnts, sizeof(cnts))
     assert r == sizeof(cnts)
     assert cnts.time_running == cnts.time_enabled
