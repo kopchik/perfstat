@@ -51,7 +51,7 @@ cdef struct Result:
   uint64_t cycles
 
 
-cdef class Task:
+cdef class Perf:
   cdef int cpu, exclude_host, exclude_guest
   cdef int ifd, cfd
   cdef pid_t pid
