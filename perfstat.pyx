@@ -4,7 +4,10 @@ from posix.ioctl cimport ioctl
 from libc.signal cimport SIGCONT, SIGSTOP
 from cython cimport sizeof, bool
 
-DEF DEBUG = False
+DEF DEBUG = True
+
+cdef extern from "errno.h":
+  int errno
 
 cdef extern from "signal.h" nogil:
   int kill(pid_t pid, int sig) except -1
@@ -37,7 +40,7 @@ cdef extern from "linux/perf_event.h":
 cdef extern from "_perf.h":
   void* mymalloc(size_t size)
   int perf_event_open(perf_event_attr *event, pid_t pid,
-                  int cpu, int group_fd, unsigned long flags) except -1
+                  int cpu, int group_fd, unsigned long flags) #except -1
 
 
 cdef struct Result:
@@ -57,7 +60,7 @@ cdef class Task:
     return "Task(pid=%s, cpu={cpu}, exclude_host={excl_host}, exclude_guest={excl_guest})" \
            .format(pid=self.pid, cpu=self.cpu, excl_host=self.exclude_host, excl_guest=self.exclude_guest)
 
-  def __cinit__(self, pid_t pid=0, int cpu=-1, int exclude_host=0, int exclude_guest=1):
+  def __cinit__(self, pid_t pid=-1, int cpu=-1, int exclude_host=0, int exclude_guest=0):
     cdef int pe_size
     cdef perf_event_attr *pe
 
@@ -85,17 +88,18 @@ cdef class Task:
       print("CFG: cpu: {cpu}, exclude_guest: {}, exclude_host: {}".format(exclude_guest, exclude_host, cpu=cpu))
 
     self.ifd = perf_event_open(pe, pid, cpu, -1, flags)
-
-    #event, pid, cpu, group_fd, flags);
+    if self.ifd == -1:
+      raise Exception("cannot open instructions counter: err {}".format(errno))
 
     # cycles counter
     pe.config = PERF_COUNT_HW_CPU_CYCLES
     self.cfd = perf_event_open(pe, pid, cpu, self.ifd, flags)
+    if self.cfd == -1:
+      raise Exception("cannot open cycles counter: err {}".format(errno))
 
     # enable events
     r = ioctl(self.ifd, PERF_EVENT_IOC_ENABLE, PERF_IOC_FLAG_GROUP)
     assert r != -1, "ioctl PERF_EVENT_IOC_ENABLE failed"
-
 
   cpdef measure(self, int interval):
     cdef Result cnts
@@ -109,7 +113,8 @@ cdef class Task:
     # read and parse
     r = read(self.ifd, &cnts, sizeof(cnts))
     assert r == sizeof(cnts)
-    assert cnts.time_running == cnts.time_enabled
+    if not cnts.time_running == cnts.time_enabled:
+      raise Exception("time_running {} != time_enabled {}".format(cnts.time_running, cnts.time_enabled))
     if not cnts.time_enabled:
       print("<not counted>")
       return (0,0)
